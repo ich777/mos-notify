@@ -256,11 +256,18 @@ func validateAndFixMessage(msg *Message) bool {
   if msg.Timestamp == "" {
     msg.Timestamp = time.Now().Format(time.RFC3339)
   }
-  if strings.TrimSpace(msg.Title) == "" {
-    if hn, err := os.Hostname(); err == nil {
+  // Always include hostname in title
+  if hn, err := os.Hostname(); err == nil {
+    if strings.TrimSpace(msg.Title) == "" {
       msg.Title = hn
     } else {
+      msg.Title = hn + " - " + msg.Title
+    }
+  } else {
+    if strings.TrimSpace(msg.Title) == "" {
       msg.Title = "HostnameError"
+    } else {
+      msg.Title = "HostnameError - " + msg.Title
     }
   }
   return true
@@ -386,7 +393,6 @@ func renderTemplate(tmpl string, data map[string]string) string {
   }
   return buf.String()
 }
-
 
 func renderTemplateRecursive(v interface{}, data map[string]string) interface{} {
   switch val := v.(type) {
