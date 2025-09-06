@@ -36,6 +36,7 @@ type ProviderConfig struct {
   Headers      map[string]string      `json:"headers"`
   Body         map[string]interface{} `json:"body"`
   AlertMapping map[string]interface{} `json:"alert_mapping"`
+  ColorPrio    interface{}            `json:"color_prio"`
 }
 
 type AppConfig struct {
@@ -300,30 +301,16 @@ func loadProviderConfigs(dir string) (map[string]ProviderConfig, error) {
 // Provider send function
 func sendToProvider(name string, cfg ProviderConfig, msg Message) {
   mapped := msg.Priority
-  if val, ok := cfg.AlertMapping[msg.Priority]; ok {
-    mapped = fmt.Sprintf("%v", val)
+  if cfg.AlertMapping != nil {
+    if val, ok := cfg.AlertMapping[msg.Priority]; ok {
+      mapped = fmt.Sprintf("%v", val)
+    }
   }
   data := buildTemplateData(msg, cfg, mapped)
   // Render body
   result := make(map[string]interface{})
   for k, v := range cfg.Body {
-    switch val := v.(type) {
-    case string:
-      result[k] = renderTemplate(val, data)
-    case map[string]interface{}:
-      if numTempl, ok := val["$number"].(string); ok {
-        rendered := renderTemplate(numTempl, data)
-        if num, err := strconv.Atoi(rendered); err == nil {
-          result[k] = num
-        } else {
-          result[k] = rendered
-        }
-      } else {
-        result[k] = val
-      }
-    default:
-      result[k] = val
-    }
+    result[k] = renderTemplateRecursive(v, data)
   }
   var reqBody io.Reader
   if ct, ok := cfg.Headers["Content-Type"]; ok && strings.Contains(ct, "json") {
@@ -360,6 +347,25 @@ func buildTemplateData(msg Message, cfg ProviderConfig, mappedPriority string) m
     "Priority": mappedPriority,
     "Time":     msg.Timestamp,
   }
+
+  // Add color information if color_prio contains mappings
+  if colorMap, ok := cfg.ColorPrio.(map[string]interface{}); ok && colorMap != nil {
+    if colorVal, exists := colorMap[msg.Priority]; exists {
+      if color, isString := colorVal.(string); isString {
+        data["Color"] = color
+        data["ColorHex"] = color // Alias for hex colors
+      }
+    } else {
+      // Default color if priority not found in mapping
+      data["Color"] = "8421504"
+      data["ColorHex"] = "8421504"
+    }
+  } else {
+    // Provide default color even when color_prio is not set
+    data["Color"] = "8421504"
+    data["ColorHex"] = "8421504"
+  }
+
   if u, ok := cfg.User.(string); ok && u != "" {
     data["User"] = u
   }
@@ -379,6 +385,37 @@ func renderTemplate(tmpl string, data map[string]string) string {
     return tmpl
   }
   return buf.String()
+}
+
+
+func renderTemplateRecursive(v interface{}, data map[string]string) interface{} {
+  switch val := v.(type) {
+  case string:
+    return renderTemplate(val, data)
+  case map[string]interface{}:
+    if numTempl, ok := val["$number"].(string); ok {
+      rendered := renderTemplate(numTempl, data)
+      if num, err := strconv.Atoi(rendered); err == nil {
+        return num
+      } else {
+        return rendered
+      }
+    } else {
+      result := make(map[string]interface{})
+      for k, v := range val {
+        result[k] = renderTemplateRecursive(v, data)
+      }
+      return result
+    }
+  case []interface{}:
+    result := make([]interface{}, len(val))
+    for i, item := range val {
+      result[i] = renderTemplateRecursive(item, data)
+    }
+    return result
+  default:
+    return val
+  }
 }
 
 // go mod tidy && go build -ldflags="-s -w"
