@@ -28,7 +28,7 @@ jobs:
       run: |
         BUILDDIR=${{ github.workspace }}
         PACKAGEDIR=$BUILDDIR/mos-notify_package
-        mkdir -p $PACKAGEDIR/DEBIAN $PACKAGEDIR/usr/bin $PACKAGEDIR/usr/share/doc/mos-notify
+        mkdir -p $PACKAGEDIR/DEBIAN $PACKAGEDIR/usr/bin $PACKAGEDIR/usr/share/doc/mos-notify $PACKAGEDIR/var/mos/notify
 
         go build -ldflags="-s -w" -o mos-notify
 
@@ -37,6 +37,8 @@ jobs:
         # Add LICENSE from repo:
         cp "${{ github.workspace }}/LICENSE" "$PACKAGEDIR/usr/share/doc/mos-notify/LICENSE"
         echo -e "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\nUpstream-Name: MOS\nSource: https://github.com/ich777/mos-notify\n\nFiles: *\nCopyright: 2025 Christoph Hummer\nLicense: GPL-2.0" >> $PACKAGEDIR/usr/share/doc/mos-notify/copyright
+
+        echo "[]" > $PACKAGEDIR/var/mos/notify/notifications.json
 
         cat > $PACKAGEDIR/DEBIAN/control << EOF
         Package: mos-notify
