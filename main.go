@@ -166,7 +166,7 @@ func handleUnixSocketConnection(conn net.Conn) {
       Title:     "",
       Message:   messageText,
       Priority:  "normal",
-      Timestamp: time.Now().Format(time.RFC3339),
+      Timestamp: time.Now().Format(time.RFC3339Nano),
     }
     log.Printf("Socket text message: %s", messageText)
   } else {
@@ -259,7 +259,7 @@ func validateAndFixMessage(msg *Message) bool {
     msg.Priority = "normal"
   }
   if msg.Timestamp == "" {
-    msg.Timestamp = time.Now().Format(time.RFC3339)
+    msg.Timestamp = time.Now().Format(time.RFC3339Nano)
   }
   // Always include hostname in title
   if hn, err := os.Hostname(); err == nil {
