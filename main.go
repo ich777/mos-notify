@@ -13,6 +13,7 @@ import (
   "path/filepath"
   "strconv"
   "strings"
+  "sync"
   "text/template"
   "time"
 
@@ -46,11 +47,13 @@ type AppConfig struct {
 
 // Global vars
 var (
-  upgrader  = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-  clients   = make(map[*websocket.Conn]bool)
-  broadcast = make(chan Message, 100)
-  providers = make(map[string]ProviderConfig)
-  appcfg    = AppConfig{HttpPort: 999, WsPort: 999}
+  upgrader     = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+  clients      = make(map[*websocket.Conn]bool)
+  broadcast    = make(chan Message, 100)
+  providers    = make(map[string]ProviderConfig)
+  appcfg       = AppConfig{HttpPort: 999, WsPort: 999}
+  fileMutex    = sync.Mutex{}
+  logFilePath  = "/var/mos/notify/notifications.json"
 )
 
 // Main
@@ -215,6 +218,8 @@ func handleMessages() {
       }
       go sendToProvider(name, cfg, msg)
     }
+    // Write to file
+    go writeMessageToFile(msg)
   }
 }
 
@@ -421,6 +426,49 @@ func renderTemplateRecursive(v interface{}, data map[string]string) interface{} 
     return result
   default:
     return val
+  }
+}
+
+// File logging function
+func writeMessageToFile(msg Message) {
+  fileMutex.Lock()
+  defer fileMutex.Unlock()
+
+  // Ensure directory exists
+  dir := filepath.Dir(logFilePath)
+  if err := os.MkdirAll(dir, 0755); err != nil {
+    log.Printf("Error creating directory %s: %v", dir, err)
+    return
+  }
+
+  var messages []Message
+
+  // Read existing messages if file exists
+  if data, err := os.ReadFile(logFilePath); err == nil {
+    if err := json.Unmarshal(data, &messages); err != nil {
+      log.Printf("Error parsing existing notifications file: %v", err)
+      messages = []Message{} // Start fresh if file is corrupted
+    }
+  }
+
+  // Append new message
+  messages = append(messages, msg)
+
+  // Keep only last 1000 messages
+  if len(messages) > 1000 {
+    messages = messages[len(messages)-1000:]
+  }
+
+  // Write back to file
+  data, err := json.MarshalIndent(messages, "", "  ")
+  if err != nil {
+    log.Printf("Error marshaling messages: %v", err)
+    return
+  }
+
+  if err := os.WriteFile(logFilePath, data, 0644); err != nil {
+    log.Printf("Error writing to notifications file: %v", err)
+    return
   }
 }
 
