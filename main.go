@@ -22,6 +22,7 @@ import (
 
 // Structures
 type Message struct {
+  ID        int64  `json:"id"`
   Title     string `json:"title"`
   Message   string `json:"message"`
   Priority  string `json:"priority"`
@@ -105,16 +106,16 @@ func main() {
 // Socket Server
 func startUnixSocketServer() {
   socketPath := "/run/mos-notify.sock"
-  
+
   // Create Socket path, shouldn't be necessary but just in case
   if err := os.MkdirAll("/run", 0755); err != nil {
     log.Printf("Konnte Socket-Verzeichnis nicht erstellen: %v", err)
     return
   }
-  
+
   // Remove old Socket if exists
   os.Remove(socketPath)
-  
+
   // Create Socket
   listener, err := net.Listen("unix", socketPath)
   if err != nil {
@@ -122,19 +123,19 @@ func startUnixSocketServer() {
     return
   }
   defer listener.Close()
-  
+
   // chmod Socket for everyone
   os.Chmod(socketPath, 0666)
-  
+
   log.Printf("Socket started: %s", socketPath)
-  
+
   for {
     conn, err := listener.Accept()
     if err != nil {
       log.Printf("Socket Accept Error: %v", err)
       continue
     }
-    
+
     go handleUnixSocketConnection(conn)
   }
 }
@@ -142,7 +143,7 @@ func startUnixSocketServer() {
 // Socket handler
 func handleUnixSocketConnection(conn net.Conn) {
   defer conn.Close()
-  
+
   // Read message
   data := make([]byte, 1024)
   n, err := conn.Read(data)
@@ -150,7 +151,7 @@ func handleUnixSocketConnection(conn net.Conn) {
     log.Printf("Socket read error: %v", err)
     return
   }
-  
+
   messageText := strings.TrimSpace(string(data[:n]))
   if messageText == "" {
     return
@@ -158,7 +159,7 @@ func handleUnixSocketConnection(conn net.Conn) {
 
   // Just for debugging
   //log.Printf("Socket message: %s", messageText)
-  
+
   // Try to parse JSON, if fail then handle as text
   var msg Message
   if err := json.Unmarshal([]byte(messageText), &msg); err != nil {
@@ -172,7 +173,7 @@ func handleUnixSocketConnection(conn net.Conn) {
   } else {
     log.Printf("Socket json message: title='%s', message='%s', priority='%s'", msg.Title, msg.Message, msg.Priority)
   }
-  
+
   // Validate and send on broadcast or fail silently
   if validateAndFixMessage(&msg) {
     broadcast <- msg
@@ -257,6 +258,9 @@ func validateAndFixMessage(msg *Message) bool {
   }
   if msg.Priority == "" {
     msg.Priority = "normal"
+  }
+  if msg.ID == 0 {
+    msg.ID = time.Now().UnixMilli()
   }
   if msg.Timestamp == "" {
     msg.Timestamp = time.Now().Format(time.RFC3339Nano)
