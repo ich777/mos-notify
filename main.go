@@ -17,7 +17,7 @@ import (
   "text/template"
   "time"
 
-  "github.com/gorilla/websocket"
+  socketio "github.com/googollee/go-socket.io"
 )
 
 // Structures
@@ -48,8 +48,7 @@ type AppConfig struct {
 
 // Global vars
 var (
-  upgrader     = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-  clients      = make(map[*websocket.Conn]bool)
+  socketServer *socketio.Server
   broadcast    = make(chan Message, 100)
   providers    = make(map[string]ProviderConfig)
   appcfg       = AppConfig{HttpPort: 999, WsPort: 999}
@@ -84,19 +83,43 @@ func main() {
     fmt.Printf("  - %s (%s)\n", name, state)
   }
 
+  // Initialize Socket.IO server
+  socketServer = socketio.NewServer(nil)
+
+  // Socket.IO event handlers
+  socketServer.OnConnect("/", func(s socketio.Conn) error {
+    log.Printf("Client connected: %s", s.ID())
+    return nil
+  })
+
+  socketServer.OnDisconnect("/", func(s socketio.Conn, reason string) {
+    log.Printf("Client disconnected: %s, reason: %s", s.ID(), reason)
+  })
+
+  // Handle incoming messages from Socket.IO clients
+  socketServer.OnEvent("/", "send_notification", func(s socketio.Conn, msg Message) {
+    log.Printf("Socket.IO message from %s: title='%s', message='%s'", s.ID(), msg.Title, msg.Message)
+    if validateAndFixMessage(&msg) {
+      broadcast <- msg
+    }
+  })
+
   // Routes for receiving messages
-  http.HandleFunc("/ws", handleConnections)
+  http.Handle("/socket.io/", socketServer)
   http.HandleFunc("/send", handleSend)
 
   // Run dispatcher
   go handleMessages()
+
+  // Socket.IO server goroutine
+  go socketServer.Serve()
 
   // Run Unix Socket Server
   go startUnixSocketServer()
 
   addr := fmt.Sprintf(":%d", appcfg.HttpPort)
   fmt.Printf("Server start on port: %d\n", appcfg.HttpPort)
-  fmt.Printf(" - WebSocket: ws://localhost:%d/ws\n", appcfg.WsPort)
+  fmt.Printf(" - Socket.IO: http://localhost:%d/socket.io\n", appcfg.WsPort)
   fmt.Printf(" - Send:    POST http://localhost:%d/send\n", appcfg.HttpPort)
   fmt.Printf(" - Socket:  echo 'Message' | /var/run/sock/mos-notify.sock\n")
 
@@ -182,35 +205,13 @@ func handleUnixSocketConnection(conn net.Conn) {
   }
 }
 
-// WebSocket
-func handleConnections(w http.ResponseWriter, r *http.Request) {
-  ws, err := upgrader.Upgrade(w, r, nil)
-  if err != nil {
-    log.Printf("Upgrade error: %v", err)
-    return
-  }
-  defer ws.Close()
-  clients[ws] = true
-  log.Println("Client connected")
-  for {
-    if _, _, err := ws.ReadMessage(); err != nil {
-      delete(clients, ws)
-      log.Println("Client disconnected")
-      break
-    }
-  }
-}
-
 // Message handler
 func handleMessages() {
   for {
     msg := <-broadcast
-    // Send to WebSocket
-    for client := range clients {
-      if err := client.WriteJSON(msg); err != nil {
-        client.Close()
-        delete(clients, client)
-      }
+    // Broadcast to all Socket.IO clients
+    if socketServer != nil {
+      socketServer.BroadcastToNamespace("/", "notification", msg)
     }
     // Send to provider(s) if enabled
     for name, cfg := range providers {
@@ -246,8 +247,7 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
   // Validate and send on broadcast or fail silently
   if validateAndFixMessage(&msg) {
     broadcast <- msg
-    // Just for troubleshooting
-    //conn.Write([]byte("ok\n"))
+    w.WriteHeader(http.StatusOK)
   }
 }
 
@@ -476,4 +476,4 @@ func writeMessageToFile(msg Message) {
   }
 }
 
-// go mod tidy && go build -ldflags="-s -w"
+// go mod tidy && go build -ldflags="-s -w" -o mos-notify
