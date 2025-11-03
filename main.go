@@ -27,6 +27,7 @@ type Message struct {
   Message   string `json:"message"`
   Priority  string `json:"priority"`
   Timestamp string `json:"timestamp"`
+  Read      bool   `json:"read"`
 }
 
 type ProviderConfig struct {
