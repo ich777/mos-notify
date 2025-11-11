@@ -68,21 +68,21 @@ func main() {
   // Load providers
   cfgs, err := loadProviderConfigs("/boot/config/notify/providers")
   if err != nil {
-    log.Fatalf("Error loading provider config: %v", err)
+    log.Printf("Warning: Could not load provider config: %v", err)
   }
   if len(cfgs) == 0 {
-    log.Fatalf("No provider config in /boot/config/notify/providers found, please create one.")
-  }
-  providers = cfgs
-
-  // Display overview - might be removed
-  fmt.Println("Providers loaded:")
-  for name, cfg := range providers {
-    state := "enabled"
-    if !cfg.Enabled {
-      state = "disabled"
+    log.Println("No providers configured - running in WebSocket-only mode")
+  } else {
+    providers = cfgs
+    // Display overview
+    fmt.Println("Providers loaded:")
+    for name, cfg := range providers {
+      state := "enabled"
+      if !cfg.Enabled {
+        state = "disabled"
+      }
+      fmt.Printf("  - %s (%s)\n", name, state)
     }
-    fmt.Printf("  - %s (%s)\n", name, state)
   }
 
   // Routes for receiving messages
@@ -477,4 +477,4 @@ func writeMessageToFile(msg Message) {
   }
 }
 
-// go mod tidy && go build -ldflags="-s -w"
+// go mod tidy && go build -ldflags="-s -w" -o mos-notify
