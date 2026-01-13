@@ -49,13 +49,14 @@ type AppConfig struct {
 
 // Global vars
 var (
-  upgrader     = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-  clients      = make(map[*websocket.Conn]bool)
-  broadcast    = make(chan Message, 100)
-  providers    = make(map[string]ProviderConfig)
-  appcfg       = AppConfig{HttpPort: 999, WsPort: 999}
-  fileMutex    = sync.Mutex{}
-  logFilePath  = "/var/mos/notify/notifications.json"
+	upgrader      = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	clients       = make(map[*websocket.Conn]bool)
+	clientsMutex  sync.RWMutex
+	broadcast     = make(chan Message, 100)
+	providers     = make(map[string]ProviderConfig)
+	appcfg        = AppConfig{HttpPort: 999, WsPort: 999}
+	fileMutex     = sync.Mutex{}
+	logFilePath   = "/var/mos/notify/notifications.json"
 )
 
 // Main
@@ -185,44 +186,64 @@ func handleUnixSocketConnection(conn net.Conn) {
 
 // WebSocket
 func handleConnections(w http.ResponseWriter, r *http.Request) {
-  ws, err := upgrader.Upgrade(w, r, nil)
-  if err != nil {
-    log.Printf("Upgrade error: %v", err)
-    return
-  }
-  defer ws.Close()
-  clients[ws] = true
-  log.Println("Client connected")
-  for {
-    if _, _, err := ws.ReadMessage(); err != nil {
-      delete(clients, ws)
-      log.Println("Client disconnected")
-      break
-    }
-  }
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Upgrade error: %v", err)
+		return
+	}
+	defer ws.Close()
+
+	clientsMutex.Lock()
+	clients[ws] = true
+	clientsMutex.Unlock()
+	log.Println("Client connected")
+
+	for {
+		if _, _, err := ws.ReadMessage(); err != nil {
+			clientsMutex.Lock()
+			delete(clients, ws)
+			clientsMutex.Unlock()
+			log.Println("Client disconnected")
+			break
+		}
+	}
 }
 
 // Message handler
 func handleMessages() {
-  for {
-    msg := <-broadcast
-    // Send to WebSocket
-    for client := range clients {
-      if err := client.WriteJSON(msg); err != nil {
-        client.Close()
-        delete(clients, client)
-      }
-    }
-    // Send to provider(s) if enabled
-    for name, cfg := range providers {
-      if !cfg.Enabled {
-        continue
-      }
-      go sendToProvider(name, cfg, msg)
-    }
-    // Write to file
-    go writeMessageToFile(msg)
-  }
+	for {
+		msg := <-broadcast
+
+		// Send to WebSocket - collect failed clients first
+		var failedClients []*websocket.Conn
+		clientsMutex.RLock()
+		for client := range clients {
+			if err := client.WriteJSON(msg); err != nil {
+				client.Close()
+				failedClients = append(failedClients, client)
+			}
+		}
+		clientsMutex.RUnlock()
+
+		// Remove failed clients
+		if len(failedClients) > 0 {
+			clientsMutex.Lock()
+			for _, client := range failedClients {
+				delete(clients, client)
+			}
+			clientsMutex.Unlock()
+		}
+
+		// Send to provider(s) if enabled
+		for name, cfg := range providers {
+			if !cfg.Enabled {
+				continue
+			}
+			go sendToProvider(name, cfg, msg)
+		}
+		// Write to file
+		go writeMessageToFile(msg)
+	}
 }
 
 // HTTP /send
